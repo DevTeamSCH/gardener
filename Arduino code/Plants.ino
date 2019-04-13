@@ -1,11 +1,18 @@
 #include <SPI.h>
 #include <Ethernet.h>
+#include <WString.h>
 
 //Local MAC address
 byte mac[] = {0x90, 0xA2, 0xDA, 0x10, 0x3A, 0xED};
 
 //Metic for each plant
 String name = "plant1";
+
+//Props - in order
+int minLight = 0;
+int minMoisture = 0;
+int maxMoisture = 999;
+
 
 //Server addresses
 //IPAddress server(192,168,2,61);
@@ -15,13 +22,17 @@ int serverPort = 10305;
 //PIN data
 int lightDataPin = A5;
 int moistureDataPin = A4;
+int humidityDataPin = A3;
+int ledPin = D13;
 
 //Data that will be sent to server
 int moistureData = 0;
 int lightData = 0;
+int humidityData = 0;
 
 //POST data
 String PostData = "[]";
+String ReadString = "";
 
 //Ethernet client
 EthernetClient client;
@@ -31,6 +42,9 @@ const unsigned long postingInterval = 10L * 1000L; // delay between updates, in 
 
 void setup()
 {
+  //Led pin init
+  pinMode(ledPin, OUTPUT);
+  
   Serial.begin(9600);
   //while (!Serial) {
     //; // wait for serial port to connect.
@@ -68,16 +82,38 @@ void CollectData()
   int i;
   moistureData = 0;
   lightData = 0;
+  humidityData = 0;
   for(i = 1; i<=15; i++)
   {
     moistureData += 1024-analogRead(moistureDataPin);
-    Serial.println(lightData);
-    lightData += 1024-analogRead(lightDataPin);
+    lightData += analogRead(lightDataPin);
+    humidityData += 1024-analogRead(humidityDataPin);
     delay(1000);
   }
   //Make an average value
   moistureData = moistureData / 15;
   lightData = lightData / 15;
+  humidityData = humidityData / 15;
+
+  
+}
+
+void SwitchLED(){
+  if(lightData < minLight)
+  {
+    digitalWrite(ledPin, HIGH);
+  }
+  else
+  {
+    digitalWrite(ledPin, LOW);
+  }
+}
+
+void ReleaseWater(){
+  if(moistureData < minMoisture)
+  {
+    //Csapot nyit
+  }
 }
 
 void FillPostData(int data, String type)
@@ -114,9 +150,6 @@ void FillPostData(int data, String type)
     client.println(PostData);
 
     //Info in serial monitor too
-    Serial.println("The next information about plant:");
-    Serial.println("light: " + String(lightData) + ", moisture:" + String(moistureData));
-    Serial.println("is sent to server.\n");
   } 
   else 
   {
@@ -129,7 +162,10 @@ void FillPostData(int data, String type)
 void loop()
 {
   int i = 0;
-  for(i = 1; i<=15; i++)
+  //Set treshold values for the plant from the central server
+  getPlantInfo();
+  
+  for(i = 1; i<=3; i++)
   {
     //Collect data from our pins
     CollectData();
@@ -137,29 +173,30 @@ void loop()
     //Setup post requests
     FillPostData(lightData, "light");
     FillPostData(moistureData, "moisture");
+    FillPostData(humidityData, "humidity");
+
+    Serial.println("The next information about plant:");
+    Serial.println("light: " + String(lightData) + ", moisture:" + String(moistureData) + ", humidity:" + String(humidityData));
+    Serial.println("is sent to server.\n");
 
     delay(10000);
+
+    SwitchLED();
+    ReleaseWater();
   }
-  //TODO 
-  //Ide jön a response ami a majd a konstansokat küldi a tresholdhoz :D
-  //Teszt fázis alatt.
-  getPlantInfo();
   
   delay(5000);
 }
 
-// this method makes a HTTP connection to the server:
 void getPlantInfo() 
 {
-  // if there's a successful connection:
+  //If there's a successful connection:
   if (client.connect(server, serverPort)) {
     //Send the HTTP GET request:
     client.println("GET /getinfo/" + name + " HTTP/1.1");
     client.println("Host: " + String(server));
     client.println("User-Agent: Arduino/1.0");
-    //Make sure keep-alive is turned on
-    client.println("Connection: keep-alive");
-    client.println("Keep-Alive: timeout=120, max=150");
+    client.println("Connection: close");
     client.println();
 
   } 
@@ -168,15 +205,25 @@ void getPlantInfo()
     //If we didn't get a connection to the server:
     Serial.println("connection failed [GET]");
   }
-
-  if (client.available()) 
-  {
-    char c = client.read();
-    Serial.write(c);
+    //Waits for data
+    while(client.connected() && !client.available()) delay(1); 
+    //Connected or data available
+    while (client.connected() || client.available()) {
+    //Gets byte from ethernet buffer
+    char c = client.read(); 
+    ReadString += c;
   }
+
+  //Position of ampersand
+  int ind = ReadString.indexOf('&');
+  //&300, 600, 300 
+  minLight = ReadString.substring(ind+1, ind+4).toInt();
+  minMoisture = ReadString.substring(ind+6, ind+9).toInt();
+  maxMoisture = ReadString.substring(ind+11, ind+14).toInt();
+  Serial.println(ReadString);
+  ReadString = "";
 }
-
-
+/*
 String readString = String(100); //string for fetching data from address
 
 ///////////////////////
@@ -250,4 +297,4 @@ readString="";
 teststring="";
 finalstring="";
  
-}}}}} 
+}}}}} */
